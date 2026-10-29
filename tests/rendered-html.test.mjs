@@ -38,9 +38,33 @@ test("server-renders the Glas za reforme experience", async () => {
 
 test("keeps proposal routing automatic in the submission flow", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  assert.match(source, /Automatski način obrade/);
-  assert.match(source, /Poboljšanje platforme/);
+  assert.match(source, /Jedan automatski tok/);
+  assert.match(source, /Nastavi na potvrdu/);
+  assert.match(source, /Preporuka Llama sistema/);
+  assert.match(source, /Privatno moderatorima/);
   assert.doesNotMatch(source, /<legend>Način obrade<\/legend>/);
+  assert.doesNotMatch(source, /idea-type-reform|idea-type-platform/);
+});
+
+test("stores corruption and sensitive reports anonymously in protected moderator groups", async () => {
+  const [home, route, persistence, moderatorRoute, moderatorPage] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ideas/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/persistence.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/moderator/reports/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/moderacija/page.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(home, /submissionPreview\.recommendedVisibility/);
+  assert.match(home, /if \(!submissionPreview\.forcePrivate\).*x-idea-owner-key/);
+  assert.match(route, /classification\.kind === "corruption" \|\| classification\.kind === "sensitive"/);
+  assert.ok(route.indexOf("const report = await createAnonymousModeratorReport") < route.indexOf("const ownerKey = request.headers"));
+  const reportTable = persistence.slice(persistence.indexOf("const createModeratorReportsD1"), persistence.indexOf("const postgresSchema"));
+  assert.match(reportTable, /CREATE TABLE IF NOT EXISTS moderator_reports/);
+  assert.doesNotMatch(reportTable, /owner_key|submitter|ip_address|account/);
+  assert.match(moderatorRoute, /MODERATOR_API_KEY/);
+  assert.match(moderatorRoute, /authorization/);
+  assert.match(moderatorPage, /Prijave korupcije/);
+  assert.match(moderatorPage, /Osetljive prijave/);
 });
 
 test("offers guest access without advertising an unconfigured sign-in", async () => {

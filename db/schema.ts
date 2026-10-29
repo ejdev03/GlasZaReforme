@@ -121,3 +121,19 @@ export const submissionAttempts = sqliteTable("submission_attempts", {
   index("idx_submission_attempts_owner_created").on(table.ownerKeyHash, table.createdAt),
   index("idx_submission_attempts_submitter_created").on(table.submitterHash, table.createdAt),
 ]);
+
+export const moderatorReports = sqliteTable("moderator_reports", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  reportType: text("report_type", { enum: ["corruption", "sensitive"] }).notNull(),
+  title: text("title").notNull(),
+  problem: text("problem").notNull(),
+  solution: text("solution").notNull(),
+  sourceLanguage: text("source_language").notNull().default("sr-Latn"),
+  contentHash: text("content_hash").notNull(),
+  safetyReason: text("safety_reason"),
+  moderationStatus: text("moderation_status", { enum: ["pending", "reviewing", "referred", "closed"] }).notNull().default("pending"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("idx_moderator_reports_content_hash").on(table.contentHash),
+  index("idx_moderator_reports_type_status_created").on(table.reportType, table.moderationStatus, table.createdAt),
+]);

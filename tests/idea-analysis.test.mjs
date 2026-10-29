@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyLocally, estimateUrgency, moderateSubmission } from "../lib/idea-analysis.mjs";
+import { classifyLocally, classifySubmission, estimateUrgency, moderateSubmission } from "../lib/idea-analysis.mjs";
 
 test("rejects calls for violence against a protected group with a clear explanation", () => {
   const result = moderateSubmission("kill all the muslims");
@@ -14,8 +14,42 @@ test("rejects a threat against an individual while explicitly allowing political
   const result = moderateSubmission("kill Vucic");
   assert.equal(result.status, "blocked");
   assert.equal(result.code, "targeted_violence");
-  assert.match(result.explanation, /konkretnoj osobi/iu);
-  assert.match(result.explanation, /politička kritika/iu);
+  assert.match(result.explanation, /nadležni organi/iu);
+  assert.match(result.explanation, /kritika/iu);
+});
+
+test("rejects a call to lynch a person and directs justice to lawful authorities", () => {
+  const result = moderateSubmission("Linčuj ovog čoveka jer je lopov");
+  assert.equal(result.status, "blocked");
+  assert.equal(result.code, "targeted_violence");
+  assert.match(result.explanation, /pravdu.*nadležni organi/iu);
+  assert.match(result.explanation, /zakonitom postupku/iu);
+});
+
+test("allows a reform proposal that seeks to prevent lynching", () => {
+  const result = moderateSubmission("Uvesti bržu policijsku zaštitu kako bi se sprečilo linčovanje osumnjičenih");
+  assert.equal(result.status, "clear");
+});
+
+test("classifies one submission flow and recommends privacy", () => {
+  const corruption = classifySubmission("Prijavljujem mito i namešten tender u javnoj nabavci");
+  assert.deepEqual(corruption, { kind: "corruption", label: "Prijava korupcije", recommendedVisibility: "private", forcePrivate: true });
+
+  const sensitive = classifySubmission("Dokument sadrži JMBG i operativne detalje kritične infrastrukture");
+  assert.equal(sensitive.kind, "sensitive");
+  assert.equal(sensitive.recommendedVisibility, "private");
+  assert.equal(sensitive.forcePrivate, true);
+
+  const platform = classifySubmission("Na ovoj platformi treba poboljšati filter ideja");
+  assert.equal(platform.kind, "platform");
+  assert.equal(platform.recommendedVisibility, "public");
+
+  const reform = classifySubmission("Uvesti transparentne liste čekanja u bolnicama");
+  assert.equal(reform.kind, "reform");
+  assert.equal(reform.recommendedVisibility, "public");
+
+  const antiCorruptionReform = classifySubmission("Uvesti javni registar sukoba interesa i strožu kontrolu korupcije");
+  assert.equal(antiCorruptionReform.kind, "reform");
 });
 
 test("does not reject an unrealistic moon proposal but assigns zero Serbian feasibility", () => {

@@ -11,6 +11,7 @@ export type RuntimeEnv = {
   AWS_ACCESS_KEY_ID?: string;
   AWS_SECRET_ACCESS_KEY?: string;
   AWS_SESSION_TOKEN?: string;
+  MODERATOR_API_KEY?: string;
 };
 
 export type IdeaInput = {
@@ -121,6 +122,16 @@ const createAnalysisReviewsD1 = `CREATE TABLE IF NOT EXISTS analysis_review_requ
   FOREIGN KEY (idea_id) REFERENCES ideas(id) ON DELETE CASCADE, UNIQUE(idea_id, requester_key_hash)
 )`;
 
+const createModeratorReportsD1 = `CREATE TABLE IF NOT EXISTS moderator_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_type TEXT NOT NULL CHECK (report_type IN ('corruption', 'sensitive')),
+  title TEXT NOT NULL, problem TEXT NOT NULL, solution TEXT NOT NULL,
+  source_language TEXT NOT NULL DEFAULT 'sr-Latn', content_hash TEXT NOT NULL UNIQUE,
+  safety_reason TEXT,
+  moderation_status TEXT NOT NULL DEFAULT 'pending' CHECK (moderation_status IN ('pending', 'reviewing', 'referred', 'closed')),
+  created_at TEXT NOT NULL
+)`;
+
 const postgresSchema = [
   `CREATE TABLE IF NOT EXISTS ideas (
     id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL, problem TEXT NOT NULL, solution TEXT NOT NULL,
@@ -202,6 +213,16 @@ const postgresSchema = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_submission_attempts_owner_created ON submission_attempts (owner_key_hash, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS idx_submission_attempts_submitter_created ON submission_attempts (submitter_hash, created_at DESC)",
+  `CREATE TABLE IF NOT EXISTS moderator_reports (
+    id BIGSERIAL PRIMARY KEY,
+    report_type TEXT NOT NULL CHECK (report_type IN ('corruption', 'sensitive')),
+    title TEXT NOT NULL, problem TEXT NOT NULL, solution TEXT NOT NULL,
+    source_language TEXT NOT NULL DEFAULT 'sr-Latn', content_hash TEXT NOT NULL UNIQUE,
+    safety_reason TEXT,
+    moderation_status TEXT NOT NULL DEFAULT 'pending' CHECK (moderation_status IN ('pending', 'reviewing', 'referred', 'closed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_moderator_reports_type_status_created ON moderator_reports (report_type, moderation_status, created_at DESC)",
 ];
 
 function postgresConfig(runtime: RuntimeEnv) {
@@ -272,6 +293,7 @@ async function ensureQueueD1(database: D1Database) {
   await database.prepare(createAttemptsD1).run();
   await database.prepare(createCommentsD1).run();
   await database.prepare(createAnalysisReviewsD1).run();
+  await database.prepare(createModeratorReportsD1).run();
   await database.prepare(createVotesD1).run();
   const voteColumns = await database.prepare("PRAGMA table_info(votes)").all<{ name: string }>();
   for (const [name, type] of [["feasibility_rating", "INTEGER"], ["potential_rating", "INTEGER"], ["urgency_rating", "INTEGER"], ["support_rating", "INTEGER"], ["updated_at", "TEXT"]] as const) {
@@ -287,10 +309,63 @@ async function ensureQueueD1(database: D1Database) {
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_comments_author_created ON comments (author_key_hash, created_at)").run();
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_analysis_reviews_status_created ON analysis_review_requests (status, created_at)").run();
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_analysis_reviews_requester_created ON analysis_review_requests (requester_key_hash, created_at)").run();
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_moderator_reports_type_status_created ON moderator_reports (report_type, moderation_status, created_at)").run();
   await database.prepare("PRAGMA optimize").run();
 }
 
 export type SubmissionAllowance = { allowed: true } | { allowed: false; reason: "rapid" | "daily" | "duplicate"; retryAfterSeconds: number };
+
+export type AnonymousModeratorReportInput = {
+  reportType: "corruption" | "sensitive";
+  title: string;
+  problem: string;
+  solution: string;
+  sourceLanguage: string;
+  contentHash: string;
+  safetyReason: string | null;
+};
+
+export async function createAnonymousModeratorReport(runtime: RuntimeEnv, input: AnonymousModeratorReportInput) {
+  const pg = postgres(runtime);
+  if (pg) {
+    for (const statement of postgresSchema) await pg.execute(statement);
+    const result = await pg.execute(`INSERT INTO moderator_reports
+      (report_type, title, problem, solution, source_language, content_hash, safety_reason, moderation_status, created_at)
+      VALUES (:reportType, :title, :problem, :solution, :sourceLanguage, :contentHash, :safetyReason, 'pending', NOW())
+      ON CONFLICT (content_hash) DO NOTHING RETURNING id`, [
+      stringParam("reportType", input.reportType), stringParam("title", input.title), stringParam("problem", input.problem),
+      stringParam("solution", input.solution), stringParam("sourceLanguage", input.sourceLanguage),
+      stringParam("contentHash", input.contentHash), stringParam("safetyReason", input.safetyReason),
+    ]);
+    const rows = result.formattedRecords ? JSON.parse(result.formattedRecords) as Array<{ id: number }> : [];
+    return rows.length ? { status: "created" as const, id: Number(rows[0].id) } : { status: "duplicate" as const };
+  }
+  if (!runtime.DB) throw new Error("No persistence backend configured");
+  await ensureQueueD1(runtime.DB);
+  const now = new Date().toISOString();
+  const result = await runtime.DB.prepare(`INSERT OR IGNORE INTO moderator_reports
+    (report_type, title, problem, solution, source_language, content_hash, safety_reason, moderation_status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(
+      input.reportType, input.title, input.problem, input.solution, input.sourceLanguage, input.contentHash, input.safetyReason, now,
+    ).run();
+  if (!result.meta.changes) return { status: "duplicate" as const };
+  return { status: "created" as const, id: Number(result.meta.last_row_id) };
+}
+
+export async function listModeratorReports(runtime: RuntimeEnv) {
+  const pg = postgres(runtime);
+  if (pg) {
+    for (const statement of postgresSchema) await pg.execute(statement);
+    const result = await pg.execute(`SELECT id, report_type, title, problem, solution, source_language,
+      safety_reason, moderation_status, created_at FROM moderator_reports ORDER BY created_at DESC LIMIT 200`);
+    return result.formattedRecords ? JSON.parse(result.formattedRecords) : [];
+  }
+  if (!runtime.DB) throw new Error("No persistence backend configured");
+  await ensureQueueD1(runtime.DB);
+  const result = await runtime.DB.prepare(`SELECT id, report_type, title, problem, solution, source_language,
+    safety_reason, moderation_status, created_at FROM moderator_reports ORDER BY created_at DESC LIMIT 200`).all();
+  return result.results;
+}
 
 export async function checkSubmissionAllowance(runtime: RuntimeEnv, ownerKeyHash: string, submitterHash: string, contentHash: string): Promise<SubmissionAllowance> {
   const now = Date.now();

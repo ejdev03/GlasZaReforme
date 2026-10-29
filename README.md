@@ -94,6 +94,21 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
+## PostgreSQL and moderator reports
+
+The application can use AWS Aurora PostgreSQL through the RDS Data API. Copy
+`.env.example`, provide the Aurora values, and initialize a fresh database with:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/postgres/init.sql
+```
+
+Corruption and potentially sensitive submissions are stored in the separate
+`moderator_reports` table. That table deliberately has no account, device key,
+submitter hash, or IP-address field. Set a strong `MODERATOR_API_KEY` to protect
+the unlinked `/moderacija` screen and its API. Normal public or user-selected
+private proposals continue through the regular idea queue.
+
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)

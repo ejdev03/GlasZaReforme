@@ -8,6 +8,7 @@ type IdeaCard = { id: number; ministry: string; title: string; description: stri
 type IdeaSort = "popular" | "newest" | "feasible" | "urgent";
 type CategoryRatings = { feasibility: number; potential: number; urgency: number; support: number };
 type RatingResponse = { rating_count: number; feasibility: number; potential: number; urgency: number; acceptability: number; community_feasibility: number; community_potential: number; community_urgency: number; community_support: number };
+type SubmissionPreview = { classification: "reform" | "platform" | "corruption" | "sensitive"; classificationLabel: string; recommendedVisibility: "public" | "private"; forcePrivate: boolean; explanation: string };
 
 const demoIdeas: IdeaCard[] = [
   { id: 2, ministry: "Prosveta", title: "Otvoreni udžbenici za osnovne škole", description: "Javno finansirani digitalni udžbenici, dostupni besplatno svim učenicima i nastavnicima.", tags: ["Obrazovanje", "Otvoreni podaci"], score: 8.4, votes: 1932, feasibility: 8, potential: 9, urgency: 6, urgencyBasis: "Svaka školska generacija oseća trošak odlaganja, ali promena nije vanredna mera.", publicSupport: 8, confidence: "srednja", hot: false, persisted: false },
@@ -20,7 +21,7 @@ const demoIdeas: IdeaCard[] = [
 ];
 
 export default function Home() {
-  const [draft, setDraft] = useState({ title: "", problem: "", solution: "", ideaType: "reform" as "reform" | "platform" });
+  const [draft, setDraft] = useState({ title: "", problem: "", solution: "" });
   const [draftMessage, setDraftMessage] = useState("");
   const [displayedIdeas, setDisplayedIdeas] = useState<IdeaCard[]>(demoIdeas);
   const [ideaQuery, setIdeaQuery] = useState("");
@@ -40,8 +41,25 @@ export default function Home() {
   const [submitted, setSubmitted] = useState(false);
   const [submittedVisibility, setSubmittedVisibility] = useState<"public" | "restricted" | null>(null);
   const [submittedQueuePosition, setSubmittedQueuePosition] = useState<number | null>(null);
+  const [submissionPreview, setSubmissionPreview] = useState<SubmissionPreview | null>(null);
+  const [visibilityChoice, setVisibilityChoice] = useState<"public" | "private">("public");
+  const [anonymousReport, setAnonymousReport] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  function openSubmission() {
+    setSubmitted(false);
+    setAnonymousReport(false);
+    setSubmissionPreview(null);
+    setFormError("");
+    setShowSubmit(true);
+  }
+  function closeSubmission() {
+    setShowSubmit(false);
+    setSubmitted(false);
+    setAnonymousReport(false);
+    setSubmissionPreview(null);
+    setFormError("");
+  }
   function openRating(idea: IdeaCard) {
     setRatingIdea(idea);
     setRatingError("");
@@ -127,7 +145,7 @@ export default function Home() {
     if (stored) {
       try {
         const restored = JSON.parse(stored);
-        queueMicrotask(() => setDraft({ title: "", problem: "", solution: "", ideaType: "reform", ...restored }));
+        queueMicrotask(() => setDraft({ title: "", problem: "", solution: "", ...restored }));
       } catch { window.localStorage.removeItem("glas-za-reforme-draft"); }
     }
   }, []);
@@ -180,57 +198,80 @@ export default function Home() {
     setDraftMessage("Nacrt je sačuvan na ovom uređaju.");
   }
 
-  async function submitIdea(formData: FormData) {
+  function submissionLanguage() {
+    return window.localStorage.getItem("glas-za-reforme-language") === "auto"
+      ? document.documentElement.lang
+      : window.localStorage.getItem("glas-za-reforme-language") || document.documentElement.lang || "sr-Latn";
+  }
+
+  function handleSubmissionError(result: { error?: string; reason?: string; explanation?: string }) {
+    if (result.error === "prohibited_content") {
+      setFormError(result.explanation ?? "Predlog nije prihvaćen jer sadrži poziv na nasilje ili teško kršenje prava drugih.");
+      return;
+    }
+    if (result.error === "rate_limited") {
+      setFormError(result.reason === "daily" ? "Dostignut je dnevni limit predloga. Sačuvaj nacrt i pokušaj ponovo sutra." : "Poslao/la si više predloga veoma brzo. Nacrt je sačuvan — pokušaj ponovo za deset minuta.");
+      saveDraft();
+      return;
+    }
+    if (result.error === "duplicate_submission") {
+      setFormError("Ovaj sadržaj je već poslat na obradu.");
+      return;
+    }
+    setFormError(result.explanation ?? "Predlog trenutno nije moguće poslati.");
+  }
+
+  async function submitIdea(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
     setSubmitting(true);
     setFormError("");
     try {
       const response = await fetch("/api/ideas", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-idea-owner-key": getIdeaOwnerKey() },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          title: formData.get("title"),
-          problem: formData.get("problem"),
-          solution: formData.get("solution"),
-          ideaType: draft.ideaType,
-          sourceLanguage: window.localStorage.getItem("glas-za-reforme-language") === "auto"
-            ? document.documentElement.lang
-            : window.localStorage.getItem("glas-za-reforme-language") || document.documentElement.lang || "sr-Latn",
+          ...draft, stage: "preview", sourceLanguage: submissionLanguage(),
         }),
       });
-      const result = await response.json() as { error?: string; reason?: string; explanation?: string; visibility?: "public" | "restricted"; queuePosition?: number };
+      const result = await response.json() as SubmissionPreview & { error?: string; reason?: string };
       if (!response.ok) {
-        if (result.error === "prohibited_content") {
-          setFormError(result.explanation ?? "Predlog nije prihvaćen jer sadrži poziv na nasilje ili teško kršenje prava drugih.");
-          return;
-        }
-        if (result.error === "rate_limited") {
-          setFormError(result.reason === "daily" ? "Dostignut je dnevni limit predloga. Sačuvaj nacrt i pokušaj ponovo sutra." : "Poslao/la si više predloga veoma brzo. Nacrt je sačuvan — pokušaj ponovo za deset minuta.");
-          saveDraft();
-          return;
-        }
-        if (result.error === "duplicate_submission") {
-          setFormError("Ovaj predlog je već poslat i nalazi se među tvojim idejama.");
-          return;
-        }
-        throw new Error("Predlog trenutno nije moguće poslati.");
+        handleSubmissionError(result); return;
       }
+      setSubmissionPreview(result);
+      setVisibilityChoice(result.recommendedVisibility);
+    } catch { setFormError("Došlo je do greške. Pokušaj ponovo za nekoliko trenutaka."); }
+    finally { setSubmitting(false); }
+  }
+
+  async function confirmSubmission() {
+    if (!submissionPreview) return;
+    setSubmitting(true); setFormError("");
+    try {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (!submissionPreview.forcePrivate) headers["x-idea-owner-key"] = getIdeaOwnerKey();
+      const response = await fetch("/api/ideas", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...draft, stage: "confirm", confirmed: true, visibilityChoice, sourceLanguage: submissionLanguage() }),
+      });
+      const result = await response.json() as { error?: string; reason?: string; explanation?: string; visibility?: "public" | "restricted"; queuePosition?: number; anonymousReport?: boolean };
+      if (!response.ok) { handleSubmissionError(result); return; }
       setSubmittedVisibility(result.visibility ?? null);
       setSubmittedQueuePosition(result.queuePosition ?? null);
+      setAnonymousReport(Boolean(result.anonymousReport));
       window.localStorage.removeItem("glas-za-reforme-draft");
-      setDraft({ title: "", problem: "", solution: "", ideaType: "reform" });
+      setDraft({ title: "", problem: "", solution: "" });
+      setSubmissionPreview(null);
       setSubmitted(true);
-    } catch {
-      setFormError("Došlo je do greške. Pokušaj ponovo za nekoliko trenutaka.");
-    } finally {
-      setSubmitting(false);
-    }
+    } catch { setFormError("Došlo je do greške. Pokušaj ponovo za nekoliko trenutaka."); }
+    finally { setSubmitting(false); }
   }
 
   return <main>
     <header className="topbar">
       <a className="brand" href="#top" aria-label="Glas za reforme — početna"><span className="brandMark">G</span><span>Glas za <b>reforme</b></span></a>
       <nav aria-label="Glavna navigacija"><a className="active" href="#ideje">Ideje</a><a href="#kako-radi">Kako radi</a><a href="#oblasti">Oblasti</a><a href="/moje-ideje">Moje ideje</a></nav>
-      <div className="headerActions"><button className="loginButton" onClick={() => setShowLogin(true)}>Nalog</button><button className="primaryButton small" onClick={() => setShowSubmit(true)}>Predloži reformu <span>↗</span></button></div>
+      <div className="headerActions"><button className="loginButton" onClick={() => setShowLogin(true)}>Nalog</button><button className="primaryButton small" onClick={openSubmission}>Predloži reformu <span>↗</span></button></div>
     </header>
 
     <section className="hero" id="top">
@@ -238,7 +279,7 @@ export default function Home() {
         <div className="eyebrow"><span /> Platforma građanskih predloga</div>
         <h1>Dobri predlozi.<br /><em>Bolja država.</em></h1>
         <p>Predloži promenu, podrži dobre ideje i pomozi da najvažnije reforme stignu do onih koji odlučuju.</p>
-        <div className="heroActions"><button className="primaryButton" onClick={() => setShowSubmit(true)}>Predloži reformu <span>↗</span></button><a className="textButton" href="#ideje">Pregledaj ideje <span>↓</span></a></div>
+        <div className="heroActions"><button className="primaryButton" onClick={openSubmission}>Predloži reformu <span>↗</span></button><a className="textButton" href="#ideje">Pregledaj ideje <span>↓</span></a></div>
       </div>
       <div className="heroVisual" aria-hidden="true">
         <div className="orb orbOne" /><div className="orb orbTwo" />
@@ -287,7 +328,7 @@ export default function Home() {
       <div className="sectorList">{sectorSummaries.map(({ ministry, count }) => <button onClick={() => chooseMinistry(ministry)} key={ministry}>{ministry} <b>{count}</b></button>)}</div>
     </section>
 
-    <section className="submitBand" id="predlozi"><div><span className="sectionIndex light">04</span><h2>Imaš ideju koja<br />može da promeni stvari?</h2></div><div className="submitCopy"><p>Opiši problem i svoje rešenje. Naš AI asistent će pomoći da predlog stigne u pravu oblast i dobije početnu procenu.</p><button className="lightButton" onClick={() => setShowSubmit(true)}>Započni predlog <span>↗</span></button><small>Osetljive predloge možeš poslati u ograničenu moderacionu obradu.</small></div></section>
+    <section className="submitBand" id="predlozi"><div><span className="sectionIndex light">04</span><h2>Imaš ideju koja<br />može da promeni stvari?</h2></div><div className="submitCopy"><p>Opiši problem i svoje rešenje. Naš AI asistent će pomoći da predlog stigne u pravu oblast i dobije početnu procenu.</p><button className="lightButton" onClick={openSubmission}>Započni predlog <span>↗</span></button><small>Osetljive predloge možeš poslati u ograničenu moderacionu obradu.</small></div></section>
 
     <footer><a className="brand" href="#top"><span className="brandMark">G</span><span>Glas za <b>reforme</b></span></a><p>Građanska platforma za argumentovane ideje i bolju javnu upravu.</p><div><a href="#ideje">Ideje</a><a href="#kako-radi">Kako radi</a><a href="#oblasti">Oblasti</a></div><small>© 2026 Glas za reforme</small></footer>
 
@@ -309,24 +350,33 @@ export default function Home() {
       </section>
     </div>}
 
-    {showSubmit && <div className="modalBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSubmit(false); }}>
+    {showSubmit && <div className="modalBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSubmission(); }}>
       <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <button className="modalClose" onClick={() => setShowSubmit(false)} aria-label="Zatvori">×</button>
-        {!submitted ? <>
-          <span className="modalKicker">Novi predlog</span><h2 id="modal-title">Tvoja ideja</h2><p className="modalIntro">Predloži državnu reformu ili način da sama platforma postane bolja.</p>
-          <form action={submitIdea}>
-            <fieldset className="ideaTypeChoice"><legend>Vrsta ideje</legend><label aria-label="Reforma države" htmlFor="idea-type-reform" className={draft.ideaType === "reform" ? "selected" : ""}><input id="idea-type-reform" type="radio" name="ideaType" value="reform" checked={draft.ideaType === "reform"} onChange={() => setDraft({ ...draft, ideaType: "reform" })} /><span><b>Reforma države</b><small>Zakoni, institucije i javne usluge</small></span></label><label aria-label="Poboljšanje platforme" htmlFor="idea-type-platform" className={draft.ideaType === "platform" ? "selected" : ""}><input id="idea-type-platform" type="radio" name="ideaType" value="platform" checked={draft.ideaType === "platform"} onChange={() => setDraft({ ...draft, ideaType: "platform" })} /><span><b>Poboljšanje platforme</b><small>Funkcije, pravila i korisničko iskustvo</small></span></label></fieldset>
+        <button className="modalClose" onClick={closeSubmission} aria-label="Zatvori">×</button>
+        {!submitted ? submissionPreview ? <div className="submissionConfirmation">
+          <span className="modalKicker">Potvrda pre slanja</span><h2 id="modal-title">Proveri način obrade</h2>
+          <div className="llamaDecision"><span>✦</span><div><small>Llama razvrstavanje</small><b>{submissionPreview.classificationLabel}</b><p>{submissionPreview.explanation}</p></div></div>
+          <fieldset className="confirmationPrivacy"><legend>Ko može da vidi sadržaj?</legend>
+            <label className={visibilityChoice === "public" ? "selected" : ""}><input type="radio" checked={visibilityChoice === "public"} disabled={submissionPreview.forcePrivate} onChange={() => setVisibilityChoice("public")} /><span><b>Javno nakon provere</b><small>Objava ulazi u javni tok tek posle obrade i moderacije.</small></span>{submissionPreview.recommendedVisibility === "public" && <em>Preporuka Llama sistema</em>}</label>
+            <label className={visibilityChoice === "private" ? "selected" : ""}><input type="radio" checked={visibilityChoice === "private"} onChange={() => setVisibilityChoice("private")} /><span><b>Privatno moderatorima</b><small>{submissionPreview.forcePrivate ? "Prijava se čuva anonimno, bez ključa uređaja, IP oznake ili naloga." : "Predlog neće biti prikazan u javnom toku ideja."}</small></span>{submissionPreview.recommendedVisibility === "private" && <em>Preporuka Llama sistema</em>}</label>
+          </fieldset>
+          {submissionPreview.forcePrivate && <div className="anonymousGuarantee"><b>Anonimna moderatorska prijava</b><p>Sistem neće sačuvati identitet naloga, ključ uređaja, IP oznaku niti vezu ka odeljku Moje ideje. Zbog toga kasnije nećeš moći da pratiš prijavu.</p></div>}
+          {formError && <p className="formError" role="alert">{formError}</p>}
+          <div className="confirmationActions"><button className="outlineButton" type="button" onClick={() => { setSubmissionPreview(null); setFormError(""); }}>Nazad i izmeni</button><button className="primaryButton" type="button" onClick={confirmSubmission} disabled={submitting}>{submitting ? "Slanje…" : "Potvrdi i pošalji"}<span>↗</span></button></div>
+        </div> : <>
+          <span className="modalKicker">Novi predlog ili prijava</span><h2 id="modal-title">Opiši šta treba promeniti</h2><p className="modalIntro">Koristi se jedan tok za reforme, poboljšanja platforme, prijave korupcije i osetljive informacije. Llama predlaže oblast i privatnost pre nego što potvrdiš slanje.</p>
+          <form onSubmit={submitIdea}>
             <label>Naslov ideje<input name="title" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} required minLength={8} maxLength={120} placeholder="Na primer: Jedinstveni portal za lokalne takse" /></label>
             <label>Koji problem rešava?<textarea name="problem" value={draft.problem} onChange={(event) => setDraft({ ...draft, problem: event.target.value })} required minLength={30} maxLength={1500} placeholder="Opiši sadašnje stanje i koga problem pogađa…" /></label>
             <label>Kako bi izgledalo rešenje?<textarea name="solution" value={draft.solution} onChange={(event) => setDraft({ ...draft, solution: event.target.value })} required minLength={30} maxLength={2500} placeholder="Objasni predlog, očekivani rezultat i moguće prepreke…" /></label>
             <div className="draftRow"><button type="button" className="draftButton" onClick={saveDraft}>Sačuvaj nacrt</button><small>{draftMessage || "Nacrt ostaje samo na ovom uređaju dok ga ne pošalješ."}</small></div>
-            <div className="autoProcessing"><span>✦</span><div><b>Automatski način obrade</b><p>Sistem bira nadležnu oblast, oznake i nivo provere. Ti biraš samo da li želiš da menjaš državu ili ovu platformu.</p></div></div>
-            <div className="safetyNote"><b>Važno:</b> Ne unosi državne tajne, lične podatke trećih lica ili materijal čije posedovanje nije dozvoljeno. Ova platforma nije državni kanal za klasifikovane informacije.</div>
-            <div className="rulesNote"><b>Pravila predloga</b><span>Ne prihvatamo pozive na nasilje, istrebljenje ili proterivanje grupa, govor mržnje, niti predloge koji očigledno ukidaju osnovna prava. Potencijalni pravni konflikti idu na stručnu proveru pre objave.</span></div>
+            <div className="autoProcessing"><span>✦</span><div><b>Jedan automatski tok</b><p>Llama predlaže vrstu sadržaja, nadležnu oblast, oznake i da li obrada treba da bude javna ili privatna. Videćeš predlog i potvrditi privatnost pre slanja.</p></div></div>
+            <div className="safetyNote"><b>Osetljive prijave:</b> Sadržaj koji izgleda kao prijava korupcije ili potencijalno poverljiva informacija automatski ide u anonimnu, privatnu moderatorsku grupu. Ne šalji materijal čije posedovanje je protivzakonito.</div>
+            <div className="rulesNote"><b>Pravila predloga</b><span>Pozivi na linč, napad, ubistvo, istrebljenje ili proterivanje nisu dozvoljeni. Pravdu treba da sprovode nadležni organi u zakonitom postupku; platforma radi na predlozima koji pomažu da te institucije rade bolje.</span></div>
             {formError && <p className="formError" role="alert">{formError}</p>}
-            <button className="primaryButton submitButton" disabled={submitting}>{submitting ? "Slanje…" : "Pošalji na analizu"}<span>↗</span></button>
+            <button className="primaryButton submitButton" disabled={submitting}>{submitting ? "Razvrstavanje…" : "Nastavi na potvrdu"}<span>↗</span></button>
           </form>
-        </> : <div className="successState"><span>✓</span><h2>Predlog je u redu za obradu</h2><p>{submittedVisibility === "restricted" ? "Predlog čeka ograničenu ljudsku proveru i neće biti javno prikazan bez odobrenja." : `Predlog je sačuvan i čeka Llama analizu${submittedQueuePosition ? ` na mestu ${submittedQueuePosition}` : ""}. Možeš bezbedno zatvoriti stranicu.`}</p><a className="primaryButton" href="/moje-ideje">Prati obradu <span>↗</span></a></div>}
+        </> : <div className="successState"><span>✓</span><h2>{anonymousReport ? "Anonimna prijava je sačuvana" : "Predlog je u redu za obradu"}</h2><p>{anonymousReport ? "Prijava je u posebnoj moderatorskoj grupi. Nisu sačuvani podaci koji je povezuju sa tvojim uređajem ili nalogom, pa njen status nije moguće pratiti." : submittedVisibility === "restricted" ? "Izabrao/la si privatnu obradu. Predlog neće biti prikazan u javnom toku ideja." : `Predlog je sačuvan i čeka Llama analizu${submittedQueuePosition ? ` na mestu ${submittedQueuePosition}` : ""}. Možeš bezbedno zatvoriti stranicu.`}</p>{anonymousReport ? <button className="primaryButton" onClick={closeSubmission}>Zatvori</button> : <a className="primaryButton" href="/moje-ideje">Prati obradu <span>↗</span></a>}</div>}
       </section>
     </div>}
 

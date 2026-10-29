@@ -57,6 +57,13 @@
       "when": 1793221129428,
       "tag": "0007_ordinary_karma",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793260281729,
+      "tag": "0008_careful_kronos",
+      "breakpoints": true
     }
   ]
 }
