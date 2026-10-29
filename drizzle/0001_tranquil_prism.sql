@@ -1,0 +1,2 @@
+CREATE INDEX `idx_ideas_public_status` ON `ideas` (`visibility`,`moderation_status`,`created_at`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_votes_idea_voter` ON `votes` (`idea_id`,`voter_key`);

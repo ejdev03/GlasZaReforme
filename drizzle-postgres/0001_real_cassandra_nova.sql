@@ -1,0 +1,1 @@
+ALTER TABLE "ideas" ADD COLUMN "idea_type" text DEFAULT 'reform' NOT NULL;

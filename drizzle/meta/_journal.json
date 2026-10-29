@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793174372232,
+      "tag": "0000_busy_tarantula",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793174383597,
+      "tag": "0001_tranquil_prism",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793174798701,
+      "tag": "0002_panoramic_tomorrow_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793175005389,
+      "tag": "0003_high_kate_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793176783707,
+      "tag": "0004_bizarre_stingray",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793177242902,
+      "tag": "0005_oval_whistler",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793199484209,
+      "tag": "0006_pink_wrecker",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793221129428,
+      "tag": "0007_ordinary_karma",
+      "breakpoints": true
+    }
+  ]
+}
